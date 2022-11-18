@@ -19,7 +19,7 @@ class knowledgeRepository:
         knowledge["_id"] = knowledge["_id"]["$oid"]
         return knowledge
 
-        """
+    """
     get knowledge by tag
     """
     def get_by_tag(self, tag_id):

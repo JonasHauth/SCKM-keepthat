@@ -13,6 +13,50 @@ knowledgeRepo = knowledgeRepository()
 
 
 """
+Sync with Notion
+"""
+@app.route('/sync/notion', methods=['POST'])
+def sync_notion():
+
+    
+    try:
+        
+        print("To-Do")
+
+
+        # Sync Notion > Mongo (by createdTime und editedTime)
+
+        # Sync Mongo > Notion (by createdTime und editedTime)
+
+    except:
+        print('An error occurred')
+
+    response = jsonify("test")
+    response.status_code = 200
+    return response
+
+
+"""
+Clean Text and Predict Tags 
+"""
+@app.route('/prepare', methods=['POST'])
+def clean_text():
+
+    data = request.get_json()
+
+    # Create cleaned text from raw.
+
+    cleaned_text = "test"
+
+    # Multilabel prediction
+
+    tags = ["Test1", "Test2"]
+
+    response = jsonify(cleaned_text)
+    response.status_code = 200
+    return response
+
+"""
 Save Knowledge with Tag in Know
 """
 @app.route('/knowledge', methods=['POST'])
@@ -33,9 +77,11 @@ def save_knowledge_with_tag():
     knowledgeRepo.save(knowledge_test_dict)
 
     response = jsonify(knowledge_test_dict)
-    response.status_code = 201
+    response.status_code = 200
     return response
     
+
+
 
 """
 Get all Knowlegde from Know
@@ -118,9 +164,26 @@ def delete_knowledge_by_id():
 Delete all Events from DB
 """
 @app.route('/reset_test', methods=['DELETE'])
-def delete_events():
+def delete_knowledge():
     myquery = {}
     count = knowledgeRepo.delete_many(myquery)
+    return jsonify(count), 200
+
+
+"""
+Create examplex in DB
+"""
+@app.route('/create_test', methods=['GET'])
+def create_knowledge():
+    
+    knowledge_test_dict = {
+        "cleaned_text": "Die Tabelle “Subscriptions” im Schema “CRM” enthält alle Daten zu den Abonnements.",
+        "tag": ["DWH", "SQL"],
+        "source_uid": "Marcel Orth",
+        "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
+    }
+    
+    count = knowledgeRepo.insert(testKnowledgeEntry)
     return jsonify(count), 200
 
 if __name__ == '__main__':
