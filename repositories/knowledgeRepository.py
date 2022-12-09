@@ -23,7 +23,7 @@ class knowledgeRepository:
     get knowledge by tag
     """
     def get_by_tag(self, tag_id):
-        knowledge = self.knowledgeCollection.find({"tag": "tag_id"})
+        knowledge = self.knowledgeCollection.find({"tags": tag_id})
         knowledge = json.loads(json_util.dumps(knowledge))
         for item in knowledge:
             item["_id"] = item["_id"]["$oid"]
@@ -44,9 +44,9 @@ class knowledgeRepository:
     save knowledge
     """
     def save(self, knowlegde):
-        persisted_event = self.knowledgeCollection.insert_one(knowlegde)
-        new_id = json.loads(json_util.dumps(persisted_event.inserted_id))
-        return knowlegde
+        persisted_knowledge = self.knowledgeCollection.insert_one(knowlegde)
+        new_id = json.loads(json_util.dumps(persisted_knowledge.inserted_id))
+        return new_id
 
 
     """
@@ -55,8 +55,9 @@ class knowledgeRepository:
     def update(self, knowledge):
         event_id = knowledge["_id"]
         del knowledge["_id"]
-        result = self.knowledgeCollection.update_one(filter={"_id": ObjectId(event_id)}, update={"$set": knowledge})
-        return result.modified_count
+        updated_knowledge = self.knowledgeCollection.update_one(filter={"_id": ObjectId(event_id)}, update={"$set": knowledge})
+        updated_id = json.loads(json_util.dumps(updated_knowledge.inserted_id))
+        return updated_id
 
     """
     delete knowledge

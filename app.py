@@ -2,15 +2,42 @@ from flask import Flask, jsonify, request
 from repositories.knowledgeRepository import knowledgeRepository
 import json
 
+import spacy
+from spacy.matcher import Matcher
+from spacy.tokens import Token
+Token.set_extension("ignore", default=False, force=True)
+
+
 import os
 import requests
 import datetime
 from datetime import date
 from pathlib import Path
 
+nlp = spacy.load('notebooks/model/model-best')
+nlp_pretrained = spacy.load("en_core_web_trf")
+
+
 app = Flask(__name__)
 knowledgeRepo = knowledgeRepository()
 
+keywords_dict = {
+    "Allgemeine Definitionen": ["bedeutet", "gleich", "gemeint", "steht für"],
+    "HR": ["urlaub", "urlaubstage", "abrechnung", "abrechnungszeitraum", "stunden", "kostenstelle", "einkauf", "nutzer", "pe-as"],
+    "SQL": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema"],
+    "DWH": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema", "ebene", "dwh", "data warehouse", "postgresql", "daten", "feld", "felder"],
+    "Python": ["feature", "engineering", "modell", "python", "klassifizieren", "klassifiziert"],
+    "Machine Learning": ["feature", "fngineering", "modell", "python", "klassifizieren", "klassifiziert"],
+    "CRM": ["crm", "sales", "deal", "kunde", "kunden", "vertrag"],
+    "SAP": ["sap", "idoc", "berechtigung", "berechtigungen"],
+    "ERP": ["erp", "mara", "marc", "material", "materialien"],
+    "MLFlow": ["mlflow"],
+    "Zertifikate": ["zertifikat"],
+    "Kubernetes": ["kubernetes", "namespace", "d-bru", "p-bru", "ranger", "harbor"],
+    "Grafana": ["grafana"],
+    "DeepL": ["deepL", "deepL-api", "übersetzung"],
+    "API": ["api"]    
+}
 
 """
 Sync with Notion
@@ -40,19 +67,33 @@ def sync_notion():
 Clean Text and Predict Tags 
 """
 @app.route('/prepare', methods=['POST'])
-def clean_text():
+def prepare_text():
 
     data = request.get_json()
 
     # Create cleaned text from raw.
+    text = data['text']
+    print(text)
+    cleaned_text = clean_text(text)
 
-    cleaned_text = "test"
+    # Deep Learning Predict Tags
+    doc = nlp(cleaned_text)  
+    cats = doc.cats
+    dl_predicted_tags = list(dict(filter(lambda x: x[1] > 0.5, cats.items())).keys())
+    
+    # Keywords Predict Tags
+    keywords, keyword_predicted_tags = get_keywords(text, keywords_dict)
 
-    # Multilabel prediction
+    # Get all predictions
+    tags = list(set(dl_predicted_tags + keyword_predicted_tags))
 
-    tags = ["Test1", "Test2"]
 
-    response = jsonify(cleaned_text)
+    return_dict = {
+        "tags": tags,
+        "cleaned_text": cleaned_text,
+    }
+
+    response = jsonify(return_dict)
     response.status_code = 200
     return response
 
@@ -65,18 +106,14 @@ def save_knowledge_with_tag():
     data = request.get_json()
 
     knowledge_test_dict = {
-        "tag": data['tag'],
         "cleaned_text": data['cleaned_text'],
-        "raw_text": data['raw_text'],
-        "upvotes": data['upvotes'],
-        "downvotes": data['downvotes'],
+        "tags": data['tags'],
         "source_uid": data['source_uid'],
-        "source_mail": data['source_mail']
+        "raw_text": data['raw_text'],
     }
 
-    knowledgeRepo.save(knowledge_test_dict)
-
-    response = jsonify(knowledge_test_dict)
+    inserted_ID = knowledgeRepo.save(knowledge_test_dict)
+    response = jsonify(inserted_ID)
     response.status_code = 200
     return response
     
@@ -97,7 +134,7 @@ def get_all_knowledge():
 """
 Get Knowledge by Tag from Know
 """
-@app.route('/knowledge/<string:tag_id>', methods=['GET'])
+@app.route('/knowledge/tag/<string:tag_id>', methods=['GET'])
 def get_all_knowledge_by_tag(tag_id):
     knowledgeEntries = knowledgeRepo.get_by_tag(tag_id)
     response = jsonify(knowledgeEntries)
@@ -107,7 +144,7 @@ def get_all_knowledge_by_tag(tag_id):
 """
 Get Knowledge by ID from Know
 """
-@app.route('/knowledge/<string:id>', methods=['GET'])
+@app.route('/knowledge/id/<string:id>', methods=['GET'])
 def get_knowledge_by_id(id):
     knowledgeEntry = knowledgeRepo.get_by_id(id)
     response = jsonify(knowledgeEntry)
@@ -117,28 +154,23 @@ def get_knowledge_by_id(id):
 """
 Update single Knowledge by ID from Know
 """
-@app.route('/knowlegde/<string:id>', methods=['PUT'])
-def update_knowledge_by_id():
+@app.route('/knowlegde/id/<string:id>', methods=['PUT'])
+def update_knowledge_by_id(id):
     
     data = request.get_json()
 
-    print(data)
-
-    knowledgeEntry = knowledgeRepo.get_by_id(data['id'])
+    knowledgeEntry = knowledgeRepo.get_by_id(id)
 
     knowledgeEntry["tag"] = data['tag']
     knowledgeEntry["cleaned_text"] = data['cleaned_text']
-    knowledgeEntry["raw_text"] = data['raw_text']
-    knowledgeEntry["upvotes"] = data['upvotes']
-    knowledgeEntry["downvotes"] = data['downvotes']
     knowledgeEntry["source_uid"] = data['source_uid']
-    knowledgeEntry["source_mail"] = data['source_mail']
+    knowledgeEntry["raw_text"] = data['raw_text']
     
-    updated_Count = knowledgeRepo.update(knowledgeEntry)
+    updated_ID = knowledgeRepo.update(knowledgeEntry)
 
-    response = jsonify({"status_code": 200})
+    response = jsonify(updated_ID)
+    response.status_code = 200
     return response
-
 
 
 """
@@ -183,8 +215,73 @@ def create_knowledge():
         "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
     }
     
-    count = knowledgeRepo.insert(testKnowledgeEntry)
+    count = knowledgeRepo.insert(knowledge_test_dict)
     return jsonify(count), 200
+
+"""
+Help method for Clean Text
+"""
+def clean_text(text):
+    
+    doc = nlp_pretrained(text)
+    match_texts = Matcher(nlp.vocab)
+    
+    pattern = [
+        [{"POS": "ADJ"}, {"POS": "NOUN"}, {"POS": "PROPN"}],
+        [{"POS": "NOUN"}, {"POS": "PROPN"}],
+        ]
+    match_texts.add("Grußformeln", pattern, on_match=set_ignore)
+
+    hello_synoym = ["hello", "hi", "greetings", "welcome", "hey", "olla", "hi-ya", "howdy"] #"good morning", "good evening", "good afternoon", 
+
+    pattern = [
+        [{"LOWER": {"IN": hello_synoym}}, {"POS": "PROPN"}, {"IS_PUNCT": True}],  
+        [{"LOWER": {"IN": hello_synoym}}, {"POS": "ADV"}, {"IS_PUNCT": True}],
+        [{"LOWER": {"IN": hello_synoym}}, {"POS": "PRON"}, {"IS_PUNCT": True}],
+    ]
+
+    match_texts.add("Begrusungformeln", pattern, on_match=set_ignore) 
+
+    toks = [tok.text + tok.whitespace_ for tok in doc if not tok._.ignore]
+    cleaned_text = "".join(toks)
+    cleaned_text = cleaned_text[0].upper() + cleaned_text[1:]
+    
+    return(cleaned_text)
+
+
+"""
+Help method for Removing ignored speech parts
+"""
+def set_ignore(matcher, doc, id, matches):
+    for _, start, end in matches:
+        for tok in doc[start:end]:
+            tok._.ignore = True
+
+
+
+"""
+Help method for Keywords
+"""
+def get_keywords(text, keywords_dict):  # input: sentences, keywords_dict
+    all_keywords = []
+    all_categories = []
+
+    for categorie, keywords in keywords_dict.items():  
+            
+        for keyword in keywords:
+            
+            if keyword.lower() in text.lower():
+                
+                all_categories.append(categorie)
+                all_keywords.append(keyword)
+
+    all_keywords = list(set(all_keywords))
+    all_categories = list(set(all_categories))
+
+    return all_keywords, all_categories
+
 
 if __name__ == '__main__':
     app.run(port=8080)
+
+
