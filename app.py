@@ -91,7 +91,7 @@ def save_knowledge_with_tag():
 
     data = request.get_json()
 
-    knowledge_test_dict = {
+    knowledge_dict = {
         "cleaned_text": data['cleaned_text'],
         "tags": data['tags'],
         "source_uid": data['source_uid'],
@@ -99,7 +99,7 @@ def save_knowledge_with_tag():
         "editedTime": datetime.utcnow()
     }
 
-    inserted_ID = knowledgeRepo.save(knowledge_test_dict)
+    inserted_ID = knowledgeRepo.save(knowledge_dict)
     response = jsonify(inserted_ID)
     response.status_code = 200
     return response
@@ -201,7 +201,7 @@ def sync_notion():
         local_mongo_ids.append(knowledgeEntry['_id'])
     local_mongo_ids_not_present_in_notion = local_mongo_ids
     for notion_entry in notion_KnowledgeEntries:
-        mongo_id = notion_entry['properties']['ID']['title'][0]['text']['content']
+        mongo_id = notion_entry['properties']['Local ID']['rich_text'][0]['text']['content']
         if mongo_id in local_mongo_ids:
             local_mongo_ids_not_present_in_notion.remove(mongo_id)
     print(f"The following local knowledgeEntries will be newly created in Notion: {local_mongo_ids_not_present_in_notion}")
@@ -229,7 +229,7 @@ def sync_notion():
 
         # Notion last edited parsen
         print(f"Parsing KnowledgeEntry: {mongo_id}")
-        mongo_id = notion_entry['properties']['ID']['title'][0]['text']['content']
+        mongo_id = notion_entry['properties']['Local ID']['rich_text'][0]['text']['content']
         page_id = notion_entry['id']
         notion_last_edited = notion_entry['properties']['Last edited time']['last_edited_time']
         notion_last_edited = dateutil.parser.parse(notion_last_edited)
@@ -278,14 +278,14 @@ def sync_notion():
             # Vorausgesetzt es liegt eine Änderung vor.
             updateEntry = {}
             updateEntry['_id'] = mongo_id
-            updateEntry['cleaned_text'] = notion_entry['properties']['Bereinigter Text']['rich_text'][0]['text']['content']
+            updateEntry['cleaned_text'] = notion_entry['properties']['Clean Text']['title'][0]['text']['content']
             tags=[]
             for select in notion_entry['properties']['Tags/Kategorie']['multi_select']:
                 tags.append(select['name'])
             updateEntry['tags'] = tags
             updateEntry['raw_text'] = notion_entry['properties']['Original Text']['rich_text'][0]['text']['content']
             updateEntry['source_uid'] = notion_entry['properties']['Eingereicht von']['rich_text'][0]['text']['content']
-            updateEntry['editedTime'] = notion_entry['properties']['Last edited time']['last_edited_time']
+            updateEntry['editedTime'] = notion_entry['properties']['editedTime']['date']['start']
 
             # Testen, ob eine Änderung vorliegt:
             if (knowledgeEntry['_id'] != updateEntry['_id'] or knowledgeEntry['cleaned_text'] != updateEntry['cleaned_text'] or knowledgeEntry['tags'] != updateEntry['tags'] or knowledgeEntry['raw_text'] != updateEntry['raw_text'] or knowledgeEntry['source_uid'] != updateEntry['source_uid'] or knowledgeEntry['editedTime'] != updateEntry['editedTime']):
@@ -338,26 +338,24 @@ Create examples in DB
 """
 @app.route('/create_test', methods=['GET'])
 def create_knowledge():
-    
-    knowledge_test_dict = {
-        "cleaned_text": "Die Tabelle “Subscriptions” im Schema “CRM” enthält alle Daten zu den Abonnements.",
-        "tag": ["DWH", "SQL"],
-        "source_uid": "Marcel Orth",
-        "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
-    }
-    
-    df = pd.read_excel("../data/demo_data_real.xlsx")
+        
+    df = pd.read_excel("data/demo_data_real.xlsx")
+    df['labels'] = df['Tags/Kategorie'].apply(lambda x : x.split(","))
 
-    for entry in df:
+    for index, row in df.iterrows():
+
+
         knowledge_dict = {
-            "cleaned_text": entry['Cleaned Text EN'],
-            "tag": "Test",
-            "source_uid": "Marcel Orth",
-            "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
+            "cleaned_text": row['Cleaned Text EN'],
+            "tags": row['labels'],
+            "source_uid": "Jonas Hauth, Marcel Orth",
+            "raw_text": row['Original Text EN'],
+            "editedTime": datetime.utcnow()
         }
+        knowledgeRepo.save(knowledge_dict)
 
-    count = knowledgeRepo.insert(knowledge_test_dict)
-    return jsonify(count), 200
+     
+    return jsonify("Added samples."), 200
 
 """
 Help method for Clean Text
@@ -444,8 +442,8 @@ def add_to_notion(knowledgeEntry, database_id):
     }
 
     write_new_entry_to_notion['properties'] = {
-        "ID": {
-            "title": [
+        "Local ID": {
+            "rich_text": [
             {
                 "type": "text",
                 "text": {
@@ -455,8 +453,8 @@ def add_to_notion(knowledgeEntry, database_id):
             ]
         },
 
-        "Bereinigter Text": {
-            "rich_text": [
+        "Clean Text": {
+            "title": [
             {
                 "type": "text",
                 "text": {
@@ -521,8 +519,8 @@ def update_notion(knowledgeEntry, database_id):
     write_update_to_notion = {}
 
     write_update_to_notion['properties'] = {
-        "ID": {
-            "title": [
+        "Local ID": {
+            "rich_text": [
             {
                 "type": "text",
                 "text": {
@@ -532,8 +530,8 @@ def update_notion(knowledgeEntry, database_id):
             ]
         },
 
-        "Bereinigter Text": {
-            "rich_text": [
+        "Clean Text": {
+            "title": [
             {
                 "type": "text",
                 "text": {
