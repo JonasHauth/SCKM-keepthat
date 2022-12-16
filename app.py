@@ -9,8 +9,12 @@ Token.set_extension("ignore", default=False, force=True)
 
 
 import os
+import pandas as pd
+from dotenv import load_dotenv
 import requests
 import datetime
+import dateutil.parser
+from datetime import datetime
 from datetime import date
 from pathlib import Path
 
@@ -39,29 +43,11 @@ keywords_dict = {
     "API": ["api"]    
 }
 
-"""
-Sync with Notion
-"""
-@app.route('/sync/notion', methods=['POST'])
-def sync_notion():
-
-    
-    try:
-        
-        print("To-Do")
-
-
-        # Sync Notion > Mongo (by createdTime und editedTime)
-
-        # Sync Mongo > Notion (by createdTime und editedTime)
-
-    except:
-        print('An error occurred')
-
-    response = jsonify("test")
-    response.status_code = 200
-    return response
-
+# Secrets
+load_dotenv()
+database_id = os.environ.get("DATABASE_ID")
+notion_secret = os.environ.get("NOTION_SECRET")
+notion_version = os.environ.get("NOTION_VERSION")
 
 """
 Clean Text and Predict Tags 
@@ -110,6 +96,7 @@ def save_knowledge_with_tag():
         "tags": data['tags'],
         "source_uid": data['source_uid'],
         "raw_text": data['raw_text'],
+        "editedTime": datetime.utcnow()
     }
 
     inserted_ID = knowledgeRepo.save(knowledge_test_dict)
@@ -117,8 +104,6 @@ def save_knowledge_with_tag():
     response.status_code = 200
     return response
     
-
-
 
 """
 Get all Knowlegde from Know
@@ -144,7 +129,7 @@ def get_all_knowledge_by_tag(tag_id):
 """
 Get Knowledge by ID from Know
 """
-@app.route('/knowledge/id/<string:id>', methods=['GET'])
+@app.route('/knowledge/byid/<string:id>', methods=['GET'])
 def get_knowledge_by_id(id):
     knowledgeEntry = knowledgeRepo.get_by_id(id)
     response = jsonify(knowledgeEntry)
@@ -154,14 +139,16 @@ def get_knowledge_by_id(id):
 """
 Update single Knowledge by ID from Know
 """
-@app.route('/knowlegde/id/<string:id>', methods=['PUT'])
+@app.route('/knowlegde/update/<string:id>', methods=['PUT'])
 def update_knowledge_by_id(id):
-    
+
+    print(id)
+
     data = request.get_json()
 
     knowledgeEntry = knowledgeRepo.get_by_id(id)
 
-    knowledgeEntry["tag"] = data['tag']
+    knowledgeEntry["tags"] = data['tags']
     knowledgeEntry["cleaned_text"] = data['cleaned_text']
     knowledgeEntry["source_uid"] = data['source_uid']
     knowledgeEntry["raw_text"] = data['raw_text']
@@ -176,19 +163,159 @@ def update_knowledge_by_id(id):
 """
 Delete single KnowlegdeEntry by ID from Know
 """
-@app.route('/knowlegde/<string:id>', methods=['DELETE'])
-def delete_knowledge_by_id():
-    
-    data = request.get_json()
+@app.route('/knowlegde/delete/<string:id>', methods=['DELETE'])
+def delete_knowledge_by_id(id):
 
-    print(data)
+    print(id)
 
-    knowledgeEntry = knowledgeRepo.get_by_id(data['id'])
+    knowledgeEntry = knowledgeRepo.get_by_id(id)
 
-    deleted_Count = knowledgeRepo.delete(knowledgeEntry)
+    deleted_Count = knowledgeRepo.delete(knowledgeEntry['_id'])
 
-    response = jsonify("Success")
-    response.status_code = 201
+    response = jsonify(deleted_Count)
+    response.status_code = 200
+    return response
+
+"""
+Sync with Notion
+"""
+@app.route('/sync/notion', methods=['POST'])
+def sync_notion():
+
+    # Alle Einträge von Notion holen.
+    # Query Notion DB
+    url = "https://api.notion.com/v1/databases/" + database_id + "/query"
+    headers = {
+        "Authorization": notion_secret,
+        "accept": "application/json",
+        "Notion-Version": notion_version,
+        "content-type": "application/json"
+    }
+    response = requests.post(url, headers=headers)
+    notion_KnowledgeEntries = json.loads(response.text)['results']
+
+    # Einträge identifizieren, die noch nicht in Notion angelegt wurden
+    local_mongo_ids = []
+    local_KnowledgeEntries = knowledgeRepo.get_all()
+    for knowledgeEntry in local_KnowledgeEntries:
+        local_mongo_ids.append(knowledgeEntry['_id'])
+    local_mongo_ids_not_present_in_notion = local_mongo_ids
+    for notion_entry in notion_KnowledgeEntries:
+        mongo_id = notion_entry['properties']['ID']['title'][0]['text']['content']
+        if mongo_id in local_mongo_ids:
+            local_mongo_ids_not_present_in_notion.remove(mongo_id)
+    print(f"The following local knowledgeEntries will be newly created in Notion: {local_mongo_ids_not_present_in_notion}")
+
+    # KnowledgeEntreis, die noch nicht auf Notion bestehen, sollen neu nach Notion geschrieben werden
+    for mongo_id in local_mongo_ids_not_present_in_notion:
+        
+        # lokalen KnowledgeEntry laden
+        knowledgeEntry = knowledgeRepo.get_by_id(mongo_id)
+        # KnowledgeEntry zu Request konkatenieren
+        write_new_entry_to_notion = add_to_notion(knowledgeEntry, database_id)      
+        url = "https://api.notion.com/v1/pages"
+        headers = {
+            "Authorization": notion_secret,
+            "accept": "application/json",
+            "Notion-Version": notion_version,
+            "content-type": "application/json"
+        }
+        response = requests.post(url, headers=headers, json=write_new_entry_to_notion)
+        print(f"Added mongoID: {mongo_id}")
+
+
+    # Für jeden Notion entry überprüfen, ob eine Aktualisierung vorliegt
+    for notion_entry in notion_KnowledgeEntries:
+
+        # Notion last edited parsen
+        print(f"Parsing KnowledgeEntry: {mongo_id}")
+        mongo_id = notion_entry['properties']['ID']['title'][0]['text']['content']
+        page_id = notion_entry['id']
+        notion_last_edited = notion_entry['properties']['Last edited time']['last_edited_time']
+        notion_last_edited = dateutil.parser.parse(notion_last_edited)
+        # notion_last_synced = notion_entry['properties']['editedTime']['date']['start']
+        # notion_last_synced = dateutil.parser.parse(notion_last_synced)
+
+        # local last edited parsen, wenn dies nicht gefunden wurde, KnowledgeEntry von Notion löschen
+        try:
+            knowledgeEntry = knowledgeRepo.get_by_id(mongo_id)
+            mongo_time = knowledgeEntry['editedTime']
+            mongo_time = dateutil.parser.parse(mongo_time)
+            print(f'Mongo time: {mongo_time}, Notion time: {notion_last_edited} Mongo time > Notion time {mongo_time > notion_last_edited}')
+
+        except Exception as e:
+            print(e)
+
+            print("Entry doesn't exist locally anymore > Delete from Notion")
+            archive_knowledge_notion = archive_notion()
+            url = "https://api.notion.com/v1/pages/" + page_id
+            headers = {
+                "Authorization": notion_secret,
+                "accept": "application/json",
+                "Notion-Version": notion_version,
+                "content-type": "application/json"
+            }
+            response = requests.patch(url, headers=headers, json=archive_knowledge_notion)
+            continue
+
+        if mongo_time > notion_last_edited:
+
+            # Update notion wenn local last edted aktueller als notion last edited        
+            print(f"Mongo ist aktueller, update Notion for ID: {mongo_id}")
+            write_update_to_notion = update_notion(knowledgeEntry, database_id)
+            url = "https://api.notion.com/v1/pages/" + page_id
+            headers = {
+                "Authorization": notion_secret,
+                "accept": "application/json",
+                "Notion-Version": notion_version,
+                "content-type": "application/json"
+            }
+            response = requests.patch(url, headers=headers, json=write_update_to_notion)
+        
+        else:
+            
+            # Update local wenn notion_last_edited größer als mongo_time
+            # Vorausgesetzt es liegt eine Änderung vor.
+            updateEntry = {}
+            updateEntry['_id'] = mongo_id
+            updateEntry['cleaned_text'] = notion_entry['properties']['Bereinigter Text']['rich_text'][0]['text']['content']
+            tags=[]
+            for select in notion_entry['properties']['Tags/Kategorie']['multi_select']:
+                tags.append(select['name'])
+            updateEntry['tags'] = tags
+            updateEntry['raw_text'] = notion_entry['properties']['Original Text']['rich_text'][0]['text']['content']
+            updateEntry['source_uid'] = notion_entry['properties']['Eingereicht von']['rich_text'][0]['text']['content']
+            updateEntry['editedTime'] = notion_entry['properties']['Last edited time']['last_edited_time']
+
+            # Testen, ob eine Änderung vorliegt:
+            if (knowledgeEntry['_id'] != updateEntry['_id'] or knowledgeEntry['cleaned_text'] != updateEntry['cleaned_text'] or knowledgeEntry['tags'] != updateEntry['tags'] or knowledgeEntry['raw_text'] != updateEntry['raw_text'] or knowledgeEntry['source_uid'] != updateEntry['source_uid'] or knowledgeEntry['editedTime'] != updateEntry['editedTime']):
+
+                print(f"Notion ist aktueller und es liegt eine Änderung vor, update Mongo für ID: {mongo_id}.")
+
+                # Get information from Notion and call update
+                update_local_knowledge(mongo_id, updateEntry)
+
+                # Also update editedTime in Notion
+                write_update_to_notion = update_notion(updateEntry, database_id)
+
+
+                url = "https://api.notion.com/v1/pages/" + page_id
+
+                headers = {
+                    "Authorization": notion_secret,
+                    "accept": "application/json",
+                    "Notion-Version": notion_version,
+                    "content-type": "application/json"
+                }
+
+                response = requests.patch(url, headers=headers, json=write_update_to_notion)
+            
+            else:
+                print(f"Notion ist aktueller aber es liegt keine Änderung vor für ID: {mongo_id}.")
+
+
+    response = jsonify("Sucessfully synced.")
+    response.status_code = 200
     return response
 
 
@@ -198,12 +325,16 @@ Delete all Events from DB
 @app.route('/reset_test', methods=['DELETE'])
 def delete_knowledge():
     myquery = {}
-    count = knowledgeRepo.delete_many(myquery)
-    return jsonify(count), 200
+    deleted_Count = knowledgeRepo.delete_many(myquery)
+
+
+    response = jsonify(deleted_Count)
+    response.status_code = 200
+    return response
 
 
 """
-Create examplex in DB
+Create examples in DB
 """
 @app.route('/create_test', methods=['GET'])
 def create_knowledge():
@@ -215,6 +346,16 @@ def create_knowledge():
         "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
     }
     
+    df = pd.read_excel("../data/demo_data_real.xlsx")
+
+    for entry in df:
+        knowledge_dict = {
+            "cleaned_text": entry['Cleaned Text EN'],
+            "tag": "Test",
+            "source_uid": "Marcel Orth",
+            "raw_text": "Hey, du kannst die Tabelle “Subscriptions” im Schema “CRM” benutzen. Dort sind alle Daten zu den Abonnements enthalten.",
+        }
+
     count = knowledgeRepo.insert(knowledge_test_dict)
     return jsonify(count), 200
 
@@ -280,6 +421,190 @@ def get_keywords(text, keywords_dict):  # input: sentences, keywords_dict
 
     return all_keywords, all_categories
 
+"""
+Help method add to Notion
+"""
+def add_to_notion(knowledgeEntry, database_id):
+
+    mongo_id = knowledgeEntry['_id']
+    clean_text = knowledgeEntry['cleaned_text']
+    tags = knowledgeEntry['tags']
+    tags_for_notion = []
+    for tag in tags:
+        tags_for_notion.append({"name": tag})
+    source_uid = knowledgeEntry['source_uid']
+    raw_text = knowledgeEntry['raw_text']
+    editedTime = knowledgeEntry['editedTime']
+
+    write_new_entry_to_notion = {}
+
+    write_new_entry_to_notion['parent'] = {
+        "type": "database_id",
+        "database_id": database_id,
+    }
+
+    write_new_entry_to_notion['properties'] = {
+        "ID": {
+            "title": [
+            {
+                "type": "text",
+                "text": {
+                "content": mongo_id,
+                }
+            },
+            ]
+        },
+
+        "Bereinigter Text": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": clean_text,
+                }
+            },
+            ]
+        },
+
+        "Tags/Kategorie": {
+            "multi_select": tags_for_notion,
+        },
+
+        "Eingereicht von": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": source_uid,
+                }
+            },
+            ]
+        },
+
+        "Original Text": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": raw_text,
+                }
+            },
+            ]
+        },
+
+        "editedTime": {
+            "date": {
+            "start": editedTime
+            }
+        },   
+    }
+
+    return write_new_entry_to_notion
+
+"""
+Help method update to Notion
+"""
+def update_notion(knowledgeEntry, database_id):
+
+    mongo_id = knowledgeEntry['_id']
+    clean_text = knowledgeEntry['cleaned_text']
+    tags = knowledgeEntry['tags']
+    tags_for_notion = []
+    for tag in tags:
+        tags_for_notion.append({"name": tag})
+    editedTime = knowledgeEntry['editedTime']
+
+    source_uid = knowledgeEntry['source_uid']
+    raw_text = knowledgeEntry['raw_text']
+
+    
+    write_update_to_notion = {}
+
+    write_update_to_notion['properties'] = {
+        "ID": {
+            "title": [
+            {
+                "type": "text",
+                "text": {
+                "content": mongo_id,
+                }
+            },
+            ]
+        },
+
+        "Bereinigter Text": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": clean_text,
+                }
+            },
+            ]
+        },
+
+        "Tags/Kategorie": {
+            "multi_select": tags_for_notion,
+        },
+
+        "Eingereicht von": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": source_uid,
+                }
+            },
+            ]
+        },
+
+        "Original Text": {
+            "rich_text": [
+            {
+                "type": "text",
+                "text": {
+                "content": raw_text,
+                }
+            },
+            ]
+        },
+
+        "editedTime": {
+            "date": {
+            "start": editedTime
+            }
+        },  
+    }
+
+    return write_update_to_notion
+
+"""
+Help method archive to Notion
+"""
+def archive_notion():
+       
+    write_archive_to_notion = {}
+
+    write_archive_to_notion['archived'] = True
+
+    return write_archive_to_notion
+
+"""
+Update local Knowledge by ID from Know
+"""
+def update_local_knowledge(id, updateEntry):
+
+    knowledgeEntry = knowledgeRepo.get_by_id(id)
+
+    knowledgeEntry["tags"] = updateEntry['tags']
+    knowledgeEntry["cleaned_text"] = updateEntry['cleaned_text']
+    knowledgeEntry["source_uid"] = updateEntry['source_uid']
+    knowledgeEntry["raw_text"] = updateEntry['raw_text']
+    knowledgeEntry["editedTime"] = updateEntry['editedTime']
+    
+    updated_ID = knowledgeRepo.update(knowledgeEntry)
+
+    return updated_ID
 
 if __name__ == '__main__':
     app.run(port=8080)

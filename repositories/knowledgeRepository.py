@@ -56,8 +56,8 @@ class knowledgeRepository:
         event_id = knowledge["_id"]
         del knowledge["_id"]
         updated_knowledge = self.knowledgeCollection.update_one(filter={"_id": ObjectId(event_id)}, update={"$set": knowledge})
-        updated_id = json.loads(json_util.dumps(updated_knowledge.inserted_id))
-        return updated_id
+        modified_count = updated_knowledge.modified_count
+        return modified_count
 
     """
     delete knowledge

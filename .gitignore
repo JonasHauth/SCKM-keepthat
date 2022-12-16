@@ -1,2 +1,4 @@
 data/
 model/
+notebooks/02_Notion_Integration.ipynb
+.env
