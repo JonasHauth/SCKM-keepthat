@@ -25,23 +25,7 @@ nlp_pretrained = spacy.load("en_core_web_trf")
 app = Flask(__name__)
 knowledgeRepo = knowledgeRepository()
 
-keywords_dict = {
-    "Allgemeine Definitionen": ["bedeutet", "gleich", "gemeint", "steht für"],
-    "HR": ["urlaub", "urlaubstage", "abrechnung", "abrechnungszeitraum", "stunden", "kostenstelle", "einkauf", "nutzer", "pe-as"],
-    "SQL": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema"],
-    "DWH": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema", "ebene", "dwh", "data warehouse", "postgresql", "daten", "feld", "felder"],
-    "Python": ["feature", "engineering", "modell", "python", "klassifizieren", "klassifiziert"],
-    "Machine Learning": ["feature", "fngineering", "modell", "python", "klassifizieren", "klassifiziert"],
-    "CRM": ["crm", "sales", "deal", "kunde", "kunden", "vertrag"],
-    "SAP": ["sap", "idoc", "berechtigung", "berechtigungen"],
-    "ERP": ["erp", "mara", "marc", "material", "materialien"],
-    "MLFlow": ["mlflow"],
-    "Zertifikate": ["zertifikat"],
-    "Kubernetes": ["kubernetes", "namespace", "d-bru", "p-bru", "ranger", "harbor"],
-    "Grafana": ["grafana"],
-    "DeepL": ["deepL", "deepL-api", "übersetzung"],
-    "API": ["api"]    
-}
+
 
 # Secrets
 load_dotenv()
@@ -67,6 +51,24 @@ def prepare_text():
     cats = doc.cats
     dl_predicted_tags = list(dict(filter(lambda x: x[1] > 0.5, cats.items())).keys())
     
+    keywords_dict = {
+    "Allgemeine Definitionen": ["bedeutet", "gleich", "gemeint", "steht für"],
+    "HR": ["urlaub", "urlaubstage", "abrechnung", "abrechnungszeitraum", "stunden", "kostenstelle", "einkauf", "nutzer", "pe-as"],
+    "SQL": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema"],
+    "DWH": ["tabelle", "tabellen", "sql", "query", "queries", "daten", "attribut", "spalte", "merkmal", "schema", "ebene", "dwh", "data warehouse", "postgresql", "daten", "feld", "felder"],
+    "Python": ["feature", "engineering", "modell", "python", "klassifizieren", "klassifiziert"],
+    "Machine Learning": ["feature", "fngineering", "modell", "python", "klassifizieren", "klassifiziert"],
+    "CRM": ["crm", "sales", "deal", "kunde", "kunden", "vertrag"],
+    "SAP": ["sap", "idoc", "berechtigung", "berechtigungen"],
+    "ERP": ["erp", "mara", "marc", "material", "materialien"],
+    "MLFlow": ["mlflow"],
+    "Zertifikate": ["zertifikat"],
+    "Kubernetes": ["kubernetes", "namespace", "d-bru", "p-bru", "ranger", "harbor"],
+    "Grafana": ["grafana"],
+    "DeepL": ["deepL", "deepL-api", "übersetzung"],
+    "API": ["api"]    
+    }
+
     # Keywords Predict Tags
     keywords, keyword_predicted_tags = get_keywords(text, keywords_dict)
 
@@ -201,6 +203,7 @@ def sync_notion():
         local_mongo_ids.append(knowledgeEntry['_id'])
     local_mongo_ids_not_present_in_notion = local_mongo_ids
     for notion_entry in notion_KnowledgeEntries:
+        print(notion_entry)
         mongo_id = notion_entry['properties']['Local ID']['rich_text'][0]['text']['content']
         if mongo_id in local_mongo_ids:
             local_mongo_ids_not_present_in_notion.remove(mongo_id)
@@ -221,6 +224,7 @@ def sync_notion():
             "content-type": "application/json"
         }
         response = requests.post(url, headers=headers, json=write_new_entry_to_notion)
+        print(response.text)
         print(f"Added mongoID: {mongo_id}")
 
 
@@ -381,10 +385,14 @@ def clean_text(text):
 
     match_texts.add("Begrusungformeln", pattern, on_match=set_ignore) 
 
+    matches = match_texts(doc)
+
     toks = [tok.text + tok.whitespace_ for tok in doc if not tok._.ignore]
     cleaned_text = "".join(toks)
     cleaned_text = cleaned_text[0].upper() + cleaned_text[1:]
     
+    print(cleaned_text)
+
     return(cleaned_text)
 
 
@@ -432,7 +440,7 @@ def add_to_notion(knowledgeEntry, database_id):
         tags_for_notion.append({"name": tag})
     source_uid = knowledgeEntry['source_uid']
     raw_text = knowledgeEntry['raw_text']
-    editedTime = knowledgeEntry['editedTime']
+    editedTime = knowledgeEntry['editedTime']['$date']
 
     write_new_entry_to_notion = {}
 
